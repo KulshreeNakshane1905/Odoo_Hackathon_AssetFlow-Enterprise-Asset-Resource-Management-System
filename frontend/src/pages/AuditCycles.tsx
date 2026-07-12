@@ -4,14 +4,17 @@ import {
   TableBody, TableCell, TableContainer, TableHead, TableRow, 
   MenuItem, Select, FormControl, InputLabel, Card, CardContent, 
   Alert, Divider, Chip, Dialog, DialogTitle, DialogContent, 
-  DialogActions, Stack
+  DialogActions, Stack, Checkbox, ListItemText, OutlinedInput
 } from '@mui/material';
 import { 
   AssignmentTurnedIn as AuditIcon, 
   Add as AddIcon, 
   CheckCircle as CompleteIcon,
   WarningAmber as WarningIcon,
-  Download as DownloadIcon
+  Download as DownloadIcon,
+  Search as SearchIcon,
+  LocationOn as LocationIcon,
+  Group as PeopleIcon
 } from '@mui/icons-material';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -27,25 +30,24 @@ export const AuditCycles: React.FC = () => {
   const [cycles, setCycles] = useState<any[]>([]);
   const [assets, setAssets] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [auditItems, setAuditItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Scheduling Form
   const [cycleName, setCycleName] = useState('');
-  const [assignedAuditorId, setAssignedAuditorId] = useState('');
+  const [assignedAuditors, setAssignedAuditors] = useState<string[]>([]);
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState('');
+  const [scopeDeptId, setScopeDeptId] = useState('All');
+  const [scopeLocation, setScopeLocation] = useState('');
   const [scheduleOpen, setScheduleOpen] = useState(false);
 
-  // Conduct Audit Modal
+  // Conduct Audit Modal/View
   const [activeCycle, setActiveCycle] = useState<any | null>(null);
   const [conductOpen, setConductOpen] = useState(false);
-  const [selectedAssetId, setSelectedAssetId] = useState('');
-  const [statusChecked, setStatusChecked] = useState('Available');
-  const [locationChecked, setLocationChecked] = useState('');
-  const [notes, setNotes] = useState('');
-
-  // Report Modal
-  const [reportOpen, setReportOpen] = useState(false);
+  const [auditNotes, setAuditNotes] = useState<{ [assetId: string]: string }>({});
+  const [auditLocations, setAuditLocations] = useState<{ [assetId: string]: string }>({});
 
   useEffect(() => {
     loadData();
@@ -57,11 +59,13 @@ export const AuditCycles: React.FC = () => {
       const cyc = await api.getAuditCycles();
       const ast = await api.getAssets();
       const usr = await api.getUsers();
+      const depts = await api.getDepartments();
       const items = await api.getAuditItems();
 
       setCycles(cyc);
       setAssets(ast);
       setUsers(usr.filter((u: any) => u.role === 'Asset Manager' || u.role === 'Admin'));
+      setDepartments(depts);
       setAuditItems(items);
     } catch (err) {
       console.error(err);
@@ -72,20 +76,27 @@ export const AuditCycles: React.FC = () => {
 
   const handleScheduleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cycleName || !assignedAuditorId || !startDate) {
-      addNotification('⚠️ Fields Required', 'Please complete all audit scheduling inputs.', 'warning');
+    if (!cycleName || assignedAuditors.length === 0 || !startDate) {
+      addNotification('⚠️ Fields Required', 'Please provide a cycle name, date range, and assign at least one auditor.', 'warning');
       return;
     }
+
     try {
       await api.createAuditCycle({
         name: cycleName,
         start_date: startDate,
-        assigned_auditor_id: assignedAuditorId
+        end_date: endDate || null,
+        scope_department_id: scopeDeptId === 'All' ? null : scopeDeptId,
+        scope_location: scopeLocation || null,
+        assigned_auditor_ids: assignedAuditors
       }, role, user?.email || 'admin@assetflow.com');
 
-      addNotification('🎉 Audit Scheduled', `Cycle ${cycleName} initialized successfully.`, 'success');
+      addNotification('🎉 Audit Scheduled', `Cycle "${cycleName}" has been successfully scheduled.`, 'success');
       setCycleName('');
-      setAssignedAuditorId('');
+      setAssignedAuditors([]);
+      setScopeDeptId('All');
+      setScopeLocation('');
+      setEndDate('');
       setScheduleOpen(false);
       loadData();
     } catch (err: any) {
@@ -93,52 +104,64 @@ export const AuditCycles: React.FC = () => {
     }
   };
 
-  const handleConductClick = (cycle: any) => {
-    setActiveCycle(cycle);
-    setSelectedAssetId('');
-    setStatusChecked('Available');
-    setLocationChecked('');
-    setNotes('');
-    setConductOpen(true);
+  // Get assets currently matching the cycle scope
+  const getAssetsInScope = (cycle: any) => {
+    return assets.filter(a => {
+      // 1. Department Scope check
+      if (cycle.scope_department_id) {
+        // Match allocations or asset department (if any)
+        if (a.department_id !== cycle.scope_department_id) {
+          // Check if allocated to this department
+          const hasAlloc = getAssetAllocation(a.id);
+          if (!hasAlloc || hasAlloc.department_id !== cycle.scope_department_id) {
+            return false;
+          }
+        }
+      }
+      // 2. Location Scope check
+      if (cycle.scope_location) {
+        if (!a.location.toLowerCase().includes(cycle.scope_location.toLowerCase())) {
+          return false;
+        }
+      }
+      return true;
+    });
   };
 
-  const handleAuditItemSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedAssetId || !statusChecked || !locationChecked) {
-      addNotification('⚠️ Missing Selection', 'Please select asset, status, and verify location.', 'warning');
-      return;
-    }
+  const getAssetAllocation = (assetId: string) => {
+    // Helper to find active allocation of asset
+    return auditItems.find(item => item.asset_id === assetId); // simplified representation
+  };
+
+  const handleRecordInspection = async (assetId: string, statusChecked: 'Verified' | 'Missing' | 'Damaged') => {
+    const locationChecked = auditLocations[assetId] || assets.find(a => a.id === assetId)?.location || '';
+    const notes = auditNotes[assetId] || '';
 
     try {
       await api.createAuditItem({
         audit_cycle_id: activeCycle.id,
-        asset_id: selectedAssetId,
+        asset_id: assetId,
         status_checked: statusChecked,
         location_checked: locationChecked,
         notes
       }, role, user?.email || 'admin@assetflow.com');
 
-      addNotification('✅ Verification Recorded', 'Physically audited asset state has been logged.', 'success');
-      
-      // Reset verification form inputs
-      setSelectedAssetId('');
-      setStatusChecked('Available');
-      setLocationChecked('');
-      setNotes('');
+      addNotification(
+        statusChecked === 'Verified' ? '✅ Verification Logged' : '⚠️ Discrepancy Flagged',
+        `Asset has been recorded as ${statusChecked}.`,
+        statusChecked === 'Verified' ? 'success' : 'warning'
+      );
       loadData();
     } catch (err: any) {
-      addNotification('❌ Submission Failed', err.message || 'Error occurred.', 'error');
+      addNotification('❌ Failed to log check', err.message || 'Error occurred.', 'error');
     }
   };
 
   const handleCloseCycle = async (id: string) => {
-    if (window.confirm('Are you sure you want to close this audit cycle? This compiles findings.')) {
+    if (window.confirm('Are you sure you want to close this audit cycle? This will lock all checking records and auto-update missing asset statuses to Lost, and damaged assets to Under Maintenance (with auto-generated tickets).')) {
       try {
-        await api.updateAuditCycle(id, {
-          status: 'Completed',
-          end_date: new Date().toISOString().split('T')[0]
-        });
-        addNotification('🎉 Audit Cycle Closed', 'Physical audit cycle marked as complete.', 'info');
+        await api.closeAuditCycle(id, role, user?.email || 'admin@assetflow.com');
+        addNotification('🎉 Audit Cycle Closed', 'Physical audit cycle marked as completed and locked.', 'info');
         loadData();
       } catch (err: any) {
         addNotification('❌ Action Failed', err.message || 'Failed to close cycle.', 'error');
@@ -148,22 +171,25 @@ export const AuditCycles: React.FC = () => {
 
   const handleDownloadReport = (cycle: any) => {
     const cycleItems = auditItems.filter(item => item.audit_cycle_id === cycle.id);
-    const discrepancies = cycleItems.filter(item => item.discrepancy_found);
+    const discrepancies = cycleItems.filter(item => item.discrepancy_found || item.status_checked === 'Missing' || item.status_checked === 'Damaged');
 
     const doc = new jsPDF();
     doc.setFont("Helvetica", "bold");
     doc.setFontSize(16);
-    doc.text(`Discrepancy Report: ${cycle.name}`, 14, 15);
+    doc.text(`Audit Discrepancy Report: ${cycle.name}`, 14, 15);
+    
     doc.setFont("Helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`Status: Completed | Auditor Assigned: ${getAuditorName(cycle.assigned_auditor_id)}`, 14, 21);
-    doc.text(`Run Date: ${cycle.start_date} | Resolved: ${cycle.end_date || 'In Progress'}`, 14, 26);
+    const auditorsList = cycle.assigned_auditor_ids?.map((id: string) => getAuditorName(id)).join(', ') || getAuditorName(cycle.assigned_auditor_id);
+    doc.text(`Status: ${cycle.status} | Auditors: ${auditorsList}`, 14, 21);
+    doc.text(`Scope Location: ${cycle.scope_location || 'All Locations'} | Scope Dept: ${cycle.scope_department_id ? getDeptName(cycle.scope_department_id) : 'All Departments'}`, 14, 26);
+    doc.text(`Cycle Range: ${cycle.start_date} to ${cycle.end_date || 'Ongoing'}`, 14, 31);
 
     const rows = discrepancies.map(item => {
       const asset = assets.find(a => a.id === item.asset_id);
       return [
         asset ? asset.name : 'Unknown',
-        asset ? asset.serial_number : 'N/A',
+        asset ? asset.asset_tag : 'N/A',
         asset ? asset.location : 'N/A',
         item.location_checked,
         asset ? asset.status : 'N/A',
@@ -173,29 +199,43 @@ export const AuditCycles: React.FC = () => {
     });
 
     (doc as any).autoTable({
-      head: [['Asset', 'Serial #', 'DB Location', 'Checked Loc', 'DB Status', 'Checked Status', 'Remarks']],
+      head: [['Asset', 'Tag', 'DB Location', 'Audited Loc', 'DB Status', 'Audited Status', 'Remarks']],
       body: rows,
-      startY: 32,
+      startY: 37,
       theme: 'grid',
-      headStyles: { fillColor: [239, 68, 68] } // Crimson header for discrepancies
+      headStyles: { fillColor: [225, 29, 72] } // Rose-red header for discrepancies
     });
 
-    doc.save(`${cycle.name.replace(/\s+/g, '_')}_Discrepancies.pdf`);
+    doc.save(`${cycle.name.replace(/\s+/g, '_')}_Discrepancy_Report.pdf`);
     addNotification('📄 PDF Report Generated', `Discrepancy file downloaded for ${cycle.name}.`, 'success');
   };
 
   // Helpers
   const getAuditorName = (id: string) => {
     const found = users.find(u => u.id === id);
-    return found ? `${found.first_name} ${found.last_name}` : 'Unassigned';
+    return found ? `${found.first_name} ${found.last_name}` : id;
+  };
+
+  const getDeptName = (id: string) => {
+    const found = departments.find(d => d.id === id);
+    return found ? found.name : id;
   };
 
   const getDiscrepancyCount = (cycleId: string) => {
-    return auditItems.filter(item => item.audit_cycle_id === cycleId && item.discrepancy_found).length;
+    return auditItems.filter(item => item.audit_cycle_id === cycleId && (item.discrepancy_found || item.status_checked === 'Missing' || item.status_checked === 'Damaged')).length;
   };
 
   const getCheckedCount = (cycleId: string) => {
     return auditItems.filter(item => item.audit_cycle_id === cycleId).length;
+  };
+
+  const isAssetAuditedInCycle = (cycleId: string, assetId: string) => {
+    return auditItems.some(item => item.audit_cycle_id === cycleId && item.asset_id === assetId);
+  };
+
+  const getAssetAuditStateInCycle = (cycleId: string, assetId: string) => {
+    const found = auditItems.find(item => item.audit_cycle_id === cycleId && item.asset_id === assetId);
+    return found ? found.status_checked : '';
   };
 
   return (
@@ -205,34 +245,36 @@ export const AuditCycles: React.FC = () => {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
           <AuditIcon color="primary" sx={{ fontSize: '2.2rem' }} />
           <Box>
-            <Typography variant="h5" sx={{ fontWeight: 'bold' }}>Audit Cycles</Typography>
-            <Typography variant="caption" color="text.secondary">Plan, conduct physical inventory inspections, and generate discrepancy reports</Typography>
+            <Typography variant="h5" sx={{ fontWeight: 'bold' }}>Asset Auditing & Verification</Typography>
+            <Typography variant="caption" color="text.secondary">Run structured inventory cycles, assign auditors, and resolve flagged discrepancies</Typography>
           </Box>
         </Box>
         <Button 
           variant="contained" 
           startIcon={<AddIcon />} 
           onClick={() => setScheduleOpen(true)}
-          sx={{ borderRadius: 2, textTransform: 'none' }}
+          sx={{ borderRadius: 2, textTransform: 'none', background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)' }}
         >
-          Schedule Audit Cycle
+          Initialize Audit Cycle
         </Button>
       </Box>
 
       {/* Audit cycle tables */}
-      <Card sx={{ border: '1px solid', borderColor: 'divider', mb: 4 }}>
-        <CardContent>
-          <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2.5 }}>Active & Historical Inspection Cycles</Typography>
+      <Card sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', boxShadow: 'none', mb: 4 }}>
+        <CardContent sx={{ p: 0 }}>
+          <Box sx={{ p: 2.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>Active & Completed Inspection Cycles</Typography>
+          </Box>
           <TableContainer>
             <Table size="small">
               <TableHead sx={{ bgcolor: 'action.hover' }}>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Cycle Name</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Assigned Auditor</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Cycle Scope & Name</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Auditors Assigned</TableCell>
                   <TableCell sx={{ fontWeight: 'bold' }}>Start Date</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>End Date</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>End Target</TableCell>
                   <TableCell sx={{ fontWeight: 'bold' }}>Status</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Audited Items</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Completion</TableCell>
                   <TableCell sx={{ fontWeight: 'bold' }}>Discrepancies</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actions</TableCell>
                 </TableRow>
@@ -241,78 +283,99 @@ export const AuditCycles: React.FC = () => {
                 {cycles.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                      No audit cycles scheduled yet. Click 'Schedule Audit Cycle'.
+                      No audit cycles scheduled yet. Click 'Initialize Audit Cycle'.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  cycles.map((c) => (
-                    <TableRow key={c.id}>
-                      <TableCell sx={{ fontWeight: 'bold' }}>{c.name}</TableCell>
-                      <TableCell>{getAuditorName(c.assigned_auditor_id)}</TableCell>
-                      <TableCell>{c.start_date}</TableCell>
-                      <TableCell>{c.end_date || 'Ongoing'}</TableCell>
-                      <TableCell>
-                        <Chip 
-                          label={c.status} 
-                          size="small"
-                          color={c.status === 'Completed' ? 'success' : c.status === 'In Progress' ? 'warning' : 'default'}
-                          sx={{ fontWeight: 'bold' }}
-                        />
-                      </TableCell>
-                      <TableCell>{getCheckedCount(c.id)} Checked</TableCell>
-                      <TableCell>
-                        {getDiscrepancyCount(c.id) > 0 ? (
+                  cycles.map((c) => {
+                    const scopeAssets = getAssetsInScope(c);
+                    const checkedCount = getCheckedCount(c.id);
+                    const discrepanciesCount = getDiscrepancyCount(c.id);
+                    const totalInScope = scopeAssets.length;
+                    
+                    const auditorsList = c.assigned_auditor_ids 
+                      ? c.assigned_auditor_ids.map((id: string) => getAuditorName(id)).join(', ') 
+                      : getAuditorName(c.assigned_auditor_id);
+
+                    return (
+                      <TableRow key={c.id} hover>
+                        <TableCell sx={{ fontWeight: 'bold' }}>
+                          {c.name}
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.2 }}>
+                            📍 Scope: {c.scope_location || 'All Locations'} | 🏢 Dept: {c.scope_department_id ? getDeptName(c.scope_department_id) : 'All'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>{auditorsList}</TableCell>
+                        <TableCell>{c.start_date}</TableCell>
+                        <TableCell>{c.end_date || 'Ongoing'}</TableCell>
+                        <TableCell>
                           <Chip 
-                            label={`${getDiscrepancyCount(c.id)} Warnings`} 
-                            size="small" 
-                            color="error" 
-                            icon={<WarningIcon fontSize="small" />}
+                            label={c.status} 
+                            size="small"
+                            color={c.status === 'Completed' ? 'success' : c.status === 'In Progress' ? 'warning' : 'default'}
                             sx={{ fontWeight: 'bold' }}
                           />
-                        ) : (
-                          <Typography variant="body2" color="success.main" sx={{ fontSize: '0.8rem', fontWeight: 600 }}>0 Issues</Typography>
-                        )}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Stack direction="row" spacing={1} justifyContent="flex-end">
-                          {c.status === 'In Progress' && (
-                            <>
-                              <Button 
-                                size="small" 
-                                variant="contained" 
-                                color="primary" 
-                                onClick={() => handleConductClick(c)}
-                                sx={{ textTransform: 'none', borderRadius: 1.5 }}
-                              >
-                                Audit Items
-                              </Button>
-                              <Button 
-                                size="small" 
-                                variant="outlined" 
-                                color="success" 
-                                startIcon={<CompleteIcon />}
-                                onClick={() => handleCloseCycle(c.id)}
-                                sx={{ textTransform: 'none', borderRadius: 1.5 }}
-                              >
-                                Close Cycle
-                              </Button>
-                            </>
+                        </TableCell>
+                        <TableCell>
+                          <strong>{checkedCount} / {totalInScope}</strong> Assets Checked
+                        </TableCell>
+                        <TableCell>
+                          {discrepanciesCount > 0 ? (
+                            <Chip 
+                              label={`${discrepanciesCount} Flags`} 
+                              size="small" 
+                              color="error" 
+                              icon={<WarningIcon fontSize="small" />}
+                              sx={{ fontWeight: 'bold' }}
+                            />
+                          ) : (
+                            <Typography variant="body2" color="success.main" sx={{ fontSize: '0.8rem', fontWeight: 600 }}>0 Issues</Typography>
                           )}
-                          <Button 
-                            size="small" 
-                            variant="outlined" 
-                            color="error" 
-                            startIcon={<DownloadIcon />}
-                            onClick={() => handleDownloadReport(c)}
-                            disabled={getDiscrepancyCount(c.id) === 0}
-                            sx={{ textTransform: 'none', borderRadius: 1.5 }}
-                          >
-                            PDF Report
-                          </Button>
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                        </TableCell>
+                        <TableCell align="right">
+                          <Stack direction="row" spacing={1} justifyContent="flex-end">
+                            {c.status === 'In Progress' && (
+                              <>
+                                <Button 
+                                  size="small" 
+                                  variant="contained" 
+                                  color="primary" 
+                                  onClick={() => {
+                                    setActiveCycle(c);
+                                    setConductOpen(true);
+                                  }}
+                                  sx={{ textTransform: 'none', borderRadius: 1.5 }}
+                                >
+                                  Audit Deck
+                                </Button>
+                                <Button 
+                                  size="small" 
+                                  variant="outlined" 
+                                  color="success" 
+                                  startIcon={<CompleteIcon />}
+                                  onClick={() => handleCloseCycle(c.id)}
+                                  sx={{ textTransform: 'none', borderRadius: 1.5 }}
+                                >
+                                  Close & Update
+                                </Button>
+                              </>
+                            )}
+                            <Button 
+                              size="small" 
+                              variant="outlined" 
+                              color="error" 
+                              startIcon={<DownloadIcon />}
+                              onClick={() => handleDownloadReport(c)}
+                              disabled={discrepanciesCount === 0}
+                              sx={{ textTransform: 'none', borderRadius: 1.5 }}
+                            >
+                              PDF Report
+                            </Button>
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -322,30 +385,63 @@ export const AuditCycles: React.FC = () => {
 
       {/* Schedule Audit Modal */}
       <Dialog open={scheduleOpen} onClose={() => setScheduleOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 'bold' }}>Schedule New Inventory Audit</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 'bold' }}>Schedule Structured Inventory Cycle</DialogTitle>
         <DialogContent dividers>
-          <Stack spacing={2} sx={{ pt: 1 }}>
+          <Stack spacing={2.5} sx={{ pt: 1 }}>
             <TextField 
               fullWidth
               label="Cycle Name *"
               value={cycleName}
               onChange={(e) => setCycleName(e.target.value)}
-              placeholder="e.g. 2026 Q3 Hardware Audit"
+              placeholder="e.g. 2026 Q3 Facilities Audit"
             />
+            
+            {/* Multi auditor select */}
             <FormControl fullWidth>
-              <InputLabel>Assigned Auditor *</InputLabel>
+              <InputLabel>Assign Auditor(s) *</InputLabel>
               <Select
-                value={assignedAuditorId}
-                label="Assigned Auditor *"
-                onChange={(e) => setAssignedAuditorId(e.target.value)}
+                multiple
+                value={assignedAuditors}
+                onChange={(e) => setAssignedAuditors(e.target.value as string[])}
+                input={<OutlinedInput label="Assign Auditor(s) *" />}
+                renderValue={(selected) => selected.map(id => getAuditorName(id)).join(', ')}
               >
                 {users.map(u => (
                   <MenuItem key={u.id} value={u.id}>
-                    {u.first_name} {u.last_name} ({u.role})
+                    <Checkbox checked={assignedAuditors.includes(u.id)} />
+                    <ListItemText primary={`${u.first_name} ${u.last_name} (${u.role})`} />
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
+
+            <Divider>Cycle Scope</Divider>
+
+            <FormControl fullWidth size="small">
+              <InputLabel>Department Scope</InputLabel>
+              <Select
+                value={scopeDeptId}
+                label="Department Scope"
+                onChange={(e) => setScopeDeptId(e.target.value)}
+              >
+                <MenuItem value="All">All Departments</MenuItem>
+                {departments.map(d => (
+                  <MenuItem key={d.id} value={d.id}>{d.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <TextField 
+              fullWidth
+              label="Location Scope Filter"
+              value={scopeLocation}
+              onChange={(e) => setScopeLocation(e.target.value)}
+              placeholder="e.g. Warehouse B"
+              size="small"
+            />
+
+            <Divider />
+
             <TextField 
               fullWidth
               label="Start Date *"
@@ -354,83 +450,145 @@ export const AuditCycles: React.FC = () => {
               onChange={(e) => setStartDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
+
+            <TextField 
+              fullWidth
+              label="End Target Date"
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
           <Button onClick={() => setScheduleOpen(false)} sx={{ color: 'text.secondary' }}>Cancel</Button>
-          <Button onClick={handleScheduleSubmit} variant="contained">Schedule Cycle</Button>
+          <Button onClick={handleScheduleSubmit} variant="contained" sx={{ borderRadius: 2 }}>Initialize Cycle</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Conduct Verification Audits Modal */}
-      <Dialog open={conductOpen} onClose={() => setConductOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 'bold' }}>Inspect & Verify Assets ({activeCycle?.name})</DialogTitle>
+      {/* Conduct Verification Audits Modal / Dashboard Deck */}
+      <Dialog 
+        open={conductOpen} 
+        onClose={() => setConductOpen(false)} 
+        maxWidth="md" 
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3, maxHeight: '85vh' } }}
+      >
+        <DialogTitle sx={{ fontWeight: 'bold' }}>
+          🕵️ Auditor Inspection Console ({activeCycle?.name})
+        </DialogTitle>
         <DialogContent dividers>
-          <Stack spacing={3} sx={{ pt: 1 }} component="form" onSubmit={handleAuditItemSubmit}>
-            <FormControl fullWidth>
-              <InputLabel>Select Asset to Verify</InputLabel>
-              <Select
-                value={selectedAssetId}
-                label="Select Asset to Verify"
-                onChange={(e) => {
-                  setSelectedAssetId(e.target.value);
-                  const selectedAssetObj = assets.find(a => a.id === e.target.value);
-                  if (selectedAssetObj) {
-                    setLocationChecked(selectedAssetObj.location);
-                    setStatusChecked(selectedAssetObj.status);
-                  }
-                }}
-              >
-                {assets.map(a => (
-                  <MenuItem key={a.id} value={a.id}>
-                    {a.name} (SN: {a.serial_number} | expected: {a.location})
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+          {activeCycle && (
+            <Box>
+              <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
+                Scope: **{activeCycle.scope_location || 'All Locations'}** | Department: **{activeCycle.scope_department_id ? getDeptName(activeCycle.scope_department_id) : 'All'}**
+              </Alert>
 
-            <FormControl fullWidth>
-              <InputLabel>Physical Status Found</InputLabel>
-              <Select
-                value={statusChecked}
-                label="Physical Status Found"
-                onChange={(e) => setStatusChecked(e.target.value)}
-              >
-                <MenuItem value="Available">Available</MenuItem>
-                <MenuItem value="Allocated">Allocated</MenuItem>
-                <MenuItem value="Reserved">Reserved</MenuItem>
-                <MenuItem value="Under Maintenance">Under Maintenance</MenuItem>
-                <MenuItem value="Lost">Lost</MenuItem>
-                <MenuItem value="Retired">Retired</MenuItem>
-                <MenuItem value="Disposed">Disposed</MenuItem>
-              </Select>
-            </FormControl>
+              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 2 }}>
+                Target Assets list for physical scanning & checking:
+              </Typography>
 
-            <TextField 
-              fullWidth
-              label="Physical Location Found"
-              value={locationChecked}
-              onChange={(e) => setLocationChecked(e.target.value)}
-              placeholder="e.g. Warehouse B, Room 204"
-            />
+              <Stack spacing={2} sx={{ maxHeight: 400, overflowY: 'auto', pr: 1 }}>
+                {getAssetsInScope(activeCycle).map((asset) => {
+                  const isChecked = isAssetAuditedInCycle(activeCycle.id, asset.id);
+                  const checkState = getAssetAuditStateInCycle(activeCycle.id, asset.id);
 
-            <TextField 
-              fullWidth
-              label="Auditor Remarks / Notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              multiline
-              rows={2}
-              placeholder="Record any physical discrepancies or asset health conditions found"
-            />
+                  return (
+                    <Paper 
+                      key={asset.id} 
+                      variant="outlined" 
+                      sx={{ 
+                        p: 2.5, 
+                        borderRadius: 2.5, 
+                        bgcolor: isChecked ? 'action.hover' : 'background.paper',
+                        borderColor: isChecked ? 'divider' : 'primary.light',
+                        borderWidth: isChecked ? 1 : 1.5
+                      }}
+                    >
+                      <Grid container spacing={2} alignItems="center">
+                        <Grid item xs={12} sm={4}>
+                          <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                            {asset.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            Tag: {asset.asset_tag} | SN: {asset.serial_number}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                            📍 DB Location: <strong>{asset.location}</strong>
+                          </Typography>
+                        </Grid>
 
-            <Button type="submit" variant="contained" color="secondary" fullWidth sx={{ py: 1.2 }}>
-              Record Verification Check
-            </Button>
-          </Stack>
+                        <Grid item xs={12} sm={4}>
+                          <TextField 
+                            label="Physical Location Found" 
+                            size="small"
+                            fullWidth
+                            disabled={isChecked}
+                            value={auditLocations[asset.id] !== undefined ? auditLocations[asset.id] : asset.location}
+                            onChange={(e) => setAuditLocations({ ...auditLocations, [asset.id]: e.target.value })}
+                            sx={{ mb: 1.5 }}
+                          />
+                          <TextField 
+                            label="Auditor remarks" 
+                            size="small"
+                            fullWidth
+                            disabled={isChecked}
+                            placeholder="Add notes / serial match"
+                            value={auditNotes[asset.id] || ''}
+                            onChange={(e) => setAuditNotes({ ...auditNotes, [asset.id]: e.target.value })}
+                          />
+                        </Grid>
+
+                        <Grid item xs={12} sm={4} sx={{ textAlign: 'right' }}>
+                          {isChecked ? (
+                            <Chip 
+                              label={`Audited: ${checkState}`} 
+                              color={checkState === 'Verified' ? 'success' : checkState === 'Missing' ? 'error' : 'warning'}
+                              sx={{ fontWeight: 'bold' }} 
+                            />
+                          ) : (
+                            <Stack spacing={1} direction="row" justifyContent="flex-end">
+                              <Button 
+                                size="small" 
+                                variant="contained" 
+                                color="success" 
+                                onClick={() => handleRecordInspection(asset.id, 'Verified')}
+                                sx={{ textTransform: 'none', borderRadius: 1.5 }}
+                              >
+                                Verify
+                              </Button>
+                              <Button 
+                                size="small" 
+                                variant="outlined" 
+                                color="error" 
+                                onClick={() => handleRecordInspection(asset.id, 'Missing')}
+                                sx={{ textTransform: 'none', borderRadius: 1.5 }}
+                              >
+                                Missing
+                              </Button>
+                              <Button 
+                                size="small" 
+                                variant="outlined" 
+                                color="warning" 
+                                onClick={() => handleRecordInspection(asset.id, 'Damaged')}
+                                sx={{ textTransform: 'none', borderRadius: 1.5 }}
+                              >
+                                Damaged
+                              </Button>
+                            </Stack>
+                          )}
+                        </Grid>
+                      </Grid>
+                    </Paper>
+                  );
+                })}
+              </Stack>
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConductOpen(false)} sx={{ color: 'text.secondary' }}>Close Inspection Panel</Button>
+          <Button onClick={() => setConductOpen(false)} sx={{ color: 'text.secondary' }}>Close Deck</Button>
         </DialogActions>
       </Dialog>
     </Box>

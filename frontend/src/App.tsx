@@ -20,7 +20,8 @@ import {
   People as PeopleIcon,
   CalendarMonth as BookingsIcon,
   AssignmentTurnedIn as AuditIcon,
-  SwapHoriz as TransferIcon
+  SwapHoriz as TransferIcon,
+  Assessment as ReportsIcon
 } from '@mui/icons-material';
 
 import { CustomThemeProvider, useThemeToggle } from './theme/ThemeContext';
@@ -41,6 +42,8 @@ import { AuditLogs } from './pages/AuditLogs';
 import { OrganizationSetup } from './pages/OrganizationSetup';
 import { Bookings } from './pages/Bookings';
 import { AuditCycles } from './pages/AuditCycles';
+import { Reports } from './pages/Reports';
+import { Notifications } from './pages/Notifications';
 
 // Global floating components
 import { AIChatbot } from './components/AIChatbot';
@@ -55,7 +58,7 @@ const MainLayout: React.FC = () => {
   const { notifications, unreadCount, markAsRead, markAllAsRead, clearNotifications, addNotification } = useNotifications();
 
   // Navigation state
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'assets' | 'allocations' | 'bookings' | 'maintenance' | 'vendors' | 'audits' | 'employees' | 'logs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'assets' | 'allocations' | 'bookings' | 'maintenance' | 'vendors' | 'audits' | 'employees' | 'logs' | 'reports' | 'notifications'>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Notification menu state
@@ -124,15 +127,15 @@ const MainLayout: React.FC = () => {
 
   // Determine available nav items based on roles
   const navItems = [
-    { id: 'dashboard', text: 'Analytics & KPIs', icon: <DashboardIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
-    { id: 'assets', text: 'Asset Inventory', icon: <AssetsIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
-    { id: 'allocations', text: 'Allocations & Transfers', icon: <TransferIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
-    { id: 'bookings', text: 'Resource Bookings', icon: <BookingsIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
-    { id: 'maintenance', text: 'Maintenance & Service', icon: <MaintenanceIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
-    { id: 'vendors', text: 'Partners & Warranties', icon: <VendorsIcon />, roles: ['Admin', 'Asset Manager', 'Department Head'] },
-    { id: 'audits', text: 'Audit Cycles', icon: <AuditIcon />, roles: ['Admin', 'Asset Manager'] },
+    { id: 'dashboard', text: 'Dashboard', icon: <DashboardIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
     { id: 'employees', text: 'Organization Setup', icon: <PeopleIcon />, roles: ['Admin', 'Asset Manager'] },
-    { id: 'logs', text: 'System Audit Logs', icon: <LogsIcon />, roles: ['Admin', 'Asset Manager'] }
+    { id: 'assets', text: 'Assets', icon: <AssetsIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
+    { id: 'allocations', text: 'Allocation & Transfer', icon: <TransferIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
+    { id: 'bookings', text: 'Resource Booking', icon: <BookingsIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
+    { id: 'maintenance', text: 'Maintenance', icon: <MaintenanceIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] },
+    { id: 'audits', text: 'Audit', icon: <AuditIcon />, roles: ['Admin', 'Asset Manager'] },
+    { id: 'reports', text: 'Reports', icon: <ReportsIcon />, roles: ['Admin', 'Asset Manager', 'Department Head'] },
+    { id: 'notifications', text: 'Notifications', icon: <NotificationsIcon />, roles: ['Admin', 'Asset Manager', 'Department Head', 'Employee'] }
   ];
 
   const visibleNavItems = navItems.filter(item => item.roles.includes(role));
@@ -240,14 +243,16 @@ const MainLayout: React.FC = () => {
           </IconButton>
 
           <Typography variant="h6" color="text.primary" sx={{ fontWeight: 'bold', display: { xs: 'none', sm: 'block' } }}>
-             {activeTab === 'dashboard' ? 'Analytics & KPIs' : 
-              activeTab === 'assets' ? 'Asset Inventory' : 
-              activeTab === 'allocations' ? 'Allocations & Transfers' : 
-              activeTab === 'bookings' ? 'Resource Bookings' : 
-              activeTab === 'maintenance' ? 'Maintenance Requests' : 
+             {activeTab === 'dashboard' ? 'Dashboard' : 
+              activeTab === 'assets' ? 'Assets' : 
+              activeTab === 'allocations' ? 'Allocation & Transfer' : 
+              activeTab === 'bookings' ? 'Resource Booking' : 
+              activeTab === 'maintenance' ? 'Maintenance' : 
               activeTab === 'vendors' ? 'Partners & Warranties' : 
-              activeTab === 'audits' ? 'Audit Cycles' : 
-              activeTab === 'employees' ? 'Organization Setup' : 'System Audit Logs'}
+              activeTab === 'audits' ? 'Audit' : 
+              activeTab === 'employees' ? 'Organization Setup' : 
+              activeTab === 'reports' ? 'Reports' : 
+              activeTab === 'notifications' ? 'Notifications' : 'System Audit Logs'}
           </Typography>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1.5, sm: 2.5 } }}>
@@ -395,6 +400,8 @@ const MainLayout: React.FC = () => {
         {activeTab === 'vendors' && <Vendors />}
         {activeTab === 'audits' && <AuditCycles />}
         {activeTab === 'employees' && <OrganizationSetup />}
+        {activeTab === 'reports' && <Reports />}
+        {activeTab === 'notifications' && <Notifications />}
         {activeTab === 'logs' && <AuditLogs />}
       </Box>
 

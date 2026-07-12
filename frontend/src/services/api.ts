@@ -858,6 +858,58 @@ export const api = {
     });
   },
 
+  updateBooking: (id: string, updates: any, role: UserRole, email: string) => {
+    return safeFetch(`${API_BASE}/bookings/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...updates, userEmail: email, userRole: role })
+    }, () => {
+      const bookings = getLS('af-bookings');
+      const idx = bookings.findIndex((bk: any) => bk.id === id);
+      if (idx === -1) throw new Error('Booking not found.');
+
+      const currentBooking = bookings[idx];
+      const start = new Date(updates.start_time || currentBooking.start_time).getTime();
+      const end = new Date(updates.end_time || currentBooking.end_time).getTime();
+      const assetId = updates.asset_id || currentBooking.asset_id;
+
+      if (start >= end) {
+        throw new Error('Start time must be before end time.');
+      }
+
+      // Check collision with OTHER bookings
+      const activeBookings = bookings.filter((b: any) => b.asset_id === assetId && b.status === 'Confirmed' && b.id !== id);
+      const hasOverlap = activeBookings.some((b: any) => {
+        const bStart = new Date(b.start_time).getTime();
+        const bEnd = new Date(b.end_time).getTime();
+        return (start < bEnd && end > bStart);
+      });
+
+      if (hasOverlap) {
+        throw new Error('Overlap Collision Detected: This resource is already booked during this time slot.');
+      }
+
+      bookings[idx] = {
+        ...currentBooking,
+        ...updates,
+        updated_at: new Date().toISOString()
+      };
+      setLS('af-bookings', bookings);
+
+      const assets = getLS('af-assets');
+      const asset = assets.find((a: any) => a.id === assetId);
+
+      api.createActivityLog({
+        user_email: email,
+        user_role: role,
+        action: 'RESCHEDULE_BOOKING',
+        asset_id: assetId,
+        details: `Rescheduled booking for resource ${asset ? asset.name : assetId}. New slot: ${updates.start_time} to ${updates.end_time}.`
+      }, role, email);
+
+      return bookings[idx];
+    });
+  },
+
   // VENDORS
   getVendors: () => safeFetch(`${API_BASE}/vendors`, undefined, () => getLS('af-vendors')),
   
@@ -1014,8 +1066,13 @@ export const api = {
       const cycles = getLS('af-audit-cycles');
       const newCycle = {
         id: `au_${Date.now()}`,
-        status: 'Planned',
+        status: 'In Progress', // default to In Progress for immediate inspection
         created_at: new Date().toISOString(),
+        scope_department_id: cycle.scope_department_id || null,
+        scope_location: cycle.scope_location || null,
+        assigned_auditor_ids: cycle.assigned_auditor_ids || [cycle.assigned_auditor_id],
+        start_date: cycle.start_date,
+        end_date: cycle.end_date || null,
         ...cycle
       };
       cycles.push(newCycle);
@@ -1045,6 +1102,73 @@ export const api = {
         return cycles[idx];
       }
       return null;
+    });
+  },
+
+  closeAuditCycle: (id: string, role: UserRole, email: string) => {
+    return safeFetch(`${API_BASE}/audits/cycles/${id}/close`, {
+      method: 'POST',
+      body: JSON.stringify({ userEmail: email, userRole: role })
+    }, () => {
+      const cycles = getLS('af-audit-cycles');
+      const cycle = cycles.find((c: any) => c.id === id);
+      if (!cycle) throw new Error('Audit cycle not found.');
+
+      cycle.status = 'Completed';
+      cycle.end_date = new Date().toISOString().split('T')[0];
+      setLS('af-audit-cycles', cycles);
+
+      // Process audited items and lock statuses
+      const auditItems = getLS('af-audit-items').filter((item: any) => item.audit_cycle_id === id);
+      const assets = getLS('af-assets');
+
+      auditItems.forEach((item: any) => {
+        const asset = assets.find((a: any) => a.id === item.asset_id);
+        if (asset) {
+          if (item.status_checked === 'Missing') {
+            asset.status = 'Lost';
+          } else if (item.status_checked === 'Damaged') {
+            asset.status = 'Under Maintenance';
+            
+            // Auto-generate a maintenance log for the damaged asset
+            const logs = getLS('af-maintenance');
+            const newMaint = {
+              id: `m_${Date.now()}_${item.asset_id}`,
+              asset_id: item.asset_id,
+              description: `Auto-generated from Audit Cycle "${cycle.name}": Flagged as Damaged during audit. Notes: ${item.notes || 'None'}`,
+              cost: 150.0,
+              status: 'Pending',
+              approval_status: 'Pending Approval',
+              scheduled_date: new Date().toISOString().split('T')[0],
+              completion_date: null,
+              performed_by: null,
+              requested_by: 'u1', // system or admin
+              priority: 'High',
+              photo_url: '',
+              created_at: new Date().toISOString()
+            };
+            logs.push(newMaint);
+            setLS('af-maintenance', logs);
+          } else if (item.status_checked === 'Verified') {
+            // Verify location matches or update it
+            if (item.location_checked && item.location_checked.toLowerCase() !== asset.location.toLowerCase()) {
+              asset.location = item.location_checked;
+            }
+          }
+          asset.last_audit_date = new Date().toISOString().split('T')[0];
+        }
+      });
+
+      setLS('af-assets', assets);
+
+      api.createActivityLog({
+        user_email: email,
+        user_role: role,
+        action: 'CLOSE_AUDIT_CYCLE',
+        details: `Closed audit cycle "${cycle.name}" and locked all verification records.`
+      }, role, email);
+
+      return cycle;
     });
   },
 

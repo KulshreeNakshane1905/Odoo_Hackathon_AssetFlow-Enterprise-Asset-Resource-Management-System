@@ -28,31 +28,31 @@ export const CustomThemeProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const theme = useMemo(() => {
-    const primaryColor = darkMode ? '#6366f1' : '#4f46e5';
-    const secondaryColor = '#10b981';
+    const primaryColor = darkMode ? '#3b82f6' : '#1d4ed8'; // Cobalt Azure Blue
+    const secondaryColor = '#0d9488'; // Classy Teal/Forest Emerald
     
     return createTheme({
       palette: {
         mode: darkMode ? 'dark' : 'light',
         primary: {
           main: primaryColor,
-          light: '#818cf8',
-          dark: '#3730a3',
+          light: '#60a5fa',
+          dark: '#1e3a8a',
         },
         secondary: {
           main: secondaryColor,
-          light: '#34d399',
-          dark: '#059669',
+          light: '#2dd4bf',
+          dark: '#115e59',
         },
         background: {
-          default: darkMode ? '#0b0f19' : '#f8fafc',
-          paper: darkMode ? '#111827' : '#ffffff',
+          default: darkMode ? '#070a13' : '#f1f5f9', // Sleek space black/grey-slate
+          paper: darkMode ? '#0f172a' : '#ffffff', // Dark slate-900 / white
         },
         text: {
-          primary: darkMode ? '#f3f4f6' : '#0f172a',
-          secondary: darkMode ? '#9ca3af' : '#475569',
+          primary: darkMode ? '#f8fafc' : '#0f172a', // Off-white / Slate-900
+          secondary: darkMode ? '#94a3b8' : '#475569', // Slate-400 / Slate-600
         },
-        divider: darkMode ? '#1f2937' : '#e2e8f0',
+        divider: darkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(15, 23, 42, 0.06)',
       },
       typography: {
         fontFamily: "'Outfit', 'Inter', 'Roboto', sans-serif",
@@ -67,7 +67,7 @@ export const CustomThemeProvider: React.FC<{ children: React.ReactNode }> = ({ c
         body2: { fontSize: '0.85rem', lineHeight: 1.5 },
       },
       shape: {
-        borderRadius: 12,
+        borderRadius: 16,
       },
       components: {
         MuiCssBaseline: {
@@ -109,10 +109,11 @@ export const CustomThemeProvider: React.FC<{ children: React.ReactNode }> = ({ c
           styleOverrides: {
             root: {
               backgroundImage: 'none',
+              borderRadius: 16,
               boxShadow: darkMode 
-                ? '0 4px 20px 0 rgba(0, 0, 0, 0.3)' 
-                : '0 4px 20px 0 rgba(226, 232, 240, 0.8)',
-              border: darkMode ? '1px solid #1f2937' : '1px solid #f1f5f9',
+                ? '0 8px 32px 0 rgba(0, 0, 0, 0.37)' 
+                : '0 8px 32px 0 rgba(15, 23, 42, 0.04)',
+              border: darkMode ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(15, 23, 42, 0.05)',
             },
           },
         },

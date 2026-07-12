@@ -35,28 +35,52 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const saved = localStorage.getItem('system-notifications');
     return saved ? JSON.parse(saved) : [
       {
-        id: 'n1',
-        title: '⚠️ Telemetry Anomaly Detected',
-        message: 'Warehouse HVAC Unit temperature reached 108.5°C. High risk of compressor failure.',
-        type: 'error',
-        timestamp: new Date(Date.now() - 3600000).toISOString(),
-        read: false
-      },
-      {
-        id: 'n2',
-        title: '🔧 Maintenance Scheduled',
-        message: 'Projector lamp replacement is scheduled for HQ Room 101 tomorrow.',
+        id: 'mn-assigned',
+        title: '💼 Asset Assigned',
+        message: 'Laptop AF-0014 has been assigned to Priya Shah.',
         type: 'info',
-        timestamp: new Date(Date.now() - 3600000 * 3).toISOString(),
+        timestamp: new Date(Date.now() - 120000).toISOString(), // 2m ago
         read: false
       },
       {
-        id: 'n3',
-        title: '📆 Warranty Expiration Warning',
-        message: 'Standard hardware warranty for Enterprise Server Rack expires in 30 days.',
+        id: 'mn-maint-approved',
+        title: '🔧 Maintenance Approved',
+        message: 'Maintenance request AF-0055 has been approved.',
         type: 'warning',
-        timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
-        read: true
+        timestamp: new Date(Date.now() - 1080000).toISOString(), // 18m ago
+        read: false
+      },
+      {
+        id: 'mn-booking-confirmed',
+        title: '📆 Booking Confirmed',
+        message: 'Booking confirmed : Room B2 : 2:00 to 3:00 PM.',
+        type: 'success',
+        timestamp: new Date(Date.now() - 3600000).toISOString(), // 1h ago
+        read: false
+      },
+      {
+        id: 'mn-transfer-approved',
+        title: '🔄 Transfer Approved',
+        message: 'Transfer approved : AF-0033 to facilities dept.',
+        type: 'info',
+        timestamp: new Date(Date.now() - 10800000).toISOString(), // 3h ago
+        read: false
+      },
+      {
+        id: 'mn-overdue-alert',
+        title: '⚠️ Overdue Return Alert',
+        message: 'Overdue return : AF-0021 was due 3 days ago.',
+        type: 'error',
+        timestamp: new Date(Date.now() - 86400000).toISOString(), // 1d ago
+        read: false
+      },
+      {
+        id: 'mn-audit-discrepancy',
+        title: '🚨 Audit Discrepancy Flagged',
+        message: 'audit discrepancy flagged : AF-0088 marked Damaged.',
+        type: 'error',
+        timestamp: new Date(Date.now() - 172800000).toISOString(), // 2d ago
+        read: false
       }
     ];
   });

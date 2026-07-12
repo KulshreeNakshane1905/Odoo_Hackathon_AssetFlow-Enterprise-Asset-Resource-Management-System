@@ -4,7 +4,7 @@ import {
   Button, MenuItem, Table, TableBody, TableCell, TableHead, 
   TableRow, Chip, Slider, Stack, Dialog, DialogTitle, 
   DialogContent, DialogActions, FormControl, InputLabel, Select,
-  IconButton, Alert, TableContainer, Paper
+  IconButton, Alert, TableContainer, Paper, Divider, Avatar
 } from '@mui/material';
 import { 
   Build as MaintenanceIcon, 
@@ -13,7 +13,12 @@ import {
   ChevronLeft as PrevIcon,
   ChevronRight as NextIcon,
   CheckCircle as ApproveIcon,
-  Cancel as RejectIcon
+  Cancel as RejectIcon,
+  AssignmentInd as TechIcon,
+  PlayArrow as StartIcon,
+  DoneAll as ResolveIcon,
+  History as HistoryIcon,
+  Image as ImageIcon
 } from '@mui/icons-material';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -26,6 +31,7 @@ export const Maintenance: React.FC = () => {
   // Data state
   const [assets, setAssets] = useState<any[]>([]);
   const [maintenance, setMaintenance] = useState<any[]>([]);
+  const [vendors, setVendors] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -35,13 +41,26 @@ export const Maintenance: React.FC = () => {
   const [vibration, setVibration] = useState<number>(1.0);
   const [hours, setHours] = useState<number>(0);
 
-  // Maintenance form state
+  // Maintenance Form State
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
   const [selectedDateCell, setSelectedDateCell] = useState<string>('');
   const [formAsset, setFormAsset] = useState('');
   const [formDesc, setFormDesc] = useState('');
   const [formCost, setFormCost] = useState('');
   const [formVendor, setFormVendor] = useState('TechCorp Solutions');
+  const [formPriority, setFormPriority] = useState('Medium');
+  const [formPhotoUrl, setFormPhotoUrl] = useState('');
+
+  // Workflow Dialog States
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [activeTicketId, setActiveTicketId] = useState('');
+  const [assignedTech, setAssignedTech] = useState('');
+
+  const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
+  const [resolvedCost, setResolvedCost] = useState('');
+
+  // History state
+  const [historyAssetId, setHistoryAssetId] = useState('');
 
   // Calendar state (Current Month)
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -56,9 +75,12 @@ export const Maintenance: React.FC = () => {
       const a = await api.getAssets();
       const m = await api.getMaintenanceLogs();
       const u = await api.getUsers();
+      const v = await api.getVendors();
+      
       setAssets(a);
       setMaintenance(m);
       setUsers(u);
+      setVendors(v);
 
       if (a.length > 0) {
         const hvac = a.find(x => x.category === 'Facilities') || a[0];
@@ -66,6 +88,7 @@ export const Maintenance: React.FC = () => {
         setTemp(Number(hvac.telemetry_temp));
         setVibration(Number(hvac.telemetry_vibration));
         setHours(Number(hvac.telemetry_hours));
+        setHistoryAssetId(hvac.id);
       }
     } catch (err) {
       console.error(err);
@@ -120,48 +143,42 @@ export const Maintenance: React.FC = () => {
       return;
     }
 
-    const autoApprove = role === 'Admin' || role === 'Asset Manager';
+    const isManager = role === 'Admin' || role === 'Asset Manager';
     const payload = {
       asset_id: formAsset,
       description: formDesc,
       cost: Number(formCost),
-      status: autoApprove ? 'Scheduled' : 'Scheduled',
-      approval_status: autoApprove ? 'Approved' : 'Pending Approval',
+      status: isManager ? 'Approved' : 'Pending', // Pending approval if raised by Employee
+      approval_status: isManager ? 'Approved' : 'Pending Approval',
       scheduled_date: selectedDateCell,
-      performed_by: formVendor,
-      requested_by: user?.id || null
+      performed_by: isManager ? formVendor : null,
+      requested_by: user?.id || null,
+      priority: formPriority,
+      photo_url: formPhotoUrl || 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=500&auto=format&fit=crop&q=60'
     };
 
     const log = await api.createMaintenanceLog(payload, role, user?.email || 'admin@assetflow.com');
     if (log) {
-      if (autoApprove) {
-        addNotification('🛠️ Repair Cycle Scheduled', 'Added to system calendar.', 'success');
+      if (isManager) {
+        addNotification('🛠️ Repair Cycle Scheduled', 'Added and scheduled in system calendar.', 'success');
       } else {
-        addNotification('⏳ Request Submitted', 'Maintenance ticket submitted for manager approval.', 'info');
+        addNotification('⏳ Request Submitted', 'Maintenance ticket submitted for Manager review.', 'info');
       }
       setScheduleDialogOpen(false);
       setFormAsset('');
       setFormDesc('');
       setFormCost('');
+      setFormPhotoUrl('');
       loadData();
     }
-  };
-
-  const handleUpdateStatus = async (id: string, newStatus: string) => {
-    const updates = {
-      status: newStatus,
-      completion_date: newStatus === 'Completed' ? new Date().toISOString().split('T')[0] : null
-    };
-
-    await api.updateMaintenanceLog(id, updates);
-    addNotification('🔧 Maintenance Status Updated', `Log ticket marked as ${newStatus}.`, 'success');
-    loadData();
   };
 
   const handleApproveRequest = async (id: string) => {
     try {
       await api.approveMaintenanceRequest(id, user?.id || 'admin', role, user?.email || 'admin@assetflow.com');
-      addNotification('✅ Ticket Approved', 'Maintenance request has been scheduled for repair.', 'success');
+      // Set status to Approved
+      await api.updateMaintenanceLog(id, { status: 'Approved' });
+      addNotification('✅ Ticket Approved', 'Maintenance request has been approved and is ready for technician assignment.', 'success');
       loadData();
     } catch (err: any) {
       addNotification('❌ Approval Failed', err.message || 'Error occurred.', 'error');
@@ -175,6 +192,68 @@ export const Maintenance: React.FC = () => {
       loadData();
     } catch (err: any) {
       addNotification('❌ Rejection Failed', err.message || 'Error occurred.', 'error');
+    }
+  };
+
+  const handleAssignTechnicianClick = (id: string) => {
+    setActiveTicketId(id);
+    const ticket = maintenance.find(m => m.id === id);
+    setAssignedTech(ticket?.performed_by || 'TechCorp Solutions');
+    setAssignDialogOpen(true);
+  };
+
+  const handleAssignTechSubmit = async () => {
+    if (!assignedTech) return;
+    try {
+      await api.updateMaintenanceLog(activeTicketId, { 
+        status: 'Technician Assigned',
+        performed_by: assignedTech
+      });
+      addNotification('🔧 Technician Assigned', `Work assigned to ${assignedTech}.`, 'success');
+      setAssignDialogOpen(false);
+      loadData();
+    } catch (err: any) {
+      addNotification('❌ Assignment Failed', err.message || 'Error occurred.', 'error');
+    }
+  };
+
+  const handleStartWork = async (id: string) => {
+    try {
+      await api.updateMaintenanceLog(id, { status: 'In Progress' });
+      addNotification('⚡ Repair In Progress', 'Technician has started repair work.', 'info');
+      loadData();
+    } catch (err: any) {
+      addNotification('❌ Action Failed', err.message || 'Error occurred.', 'error');
+    }
+  };
+
+  const handleResolveClick = (id: string) => {
+    setActiveTicketId(id);
+    const ticket = maintenance.find(m => m.id === id);
+    setResolvedCost(ticket?.cost?.toString() || '0');
+    setResolveDialogOpen(true);
+  };
+
+  const handleResolveSubmit = async () => {
+    try {
+      await api.updateMaintenanceLog(activeTicketId, { 
+        status: 'Completed', // 'Completed' in storage maps to Resolved
+        cost: Number(resolvedCost),
+        completion_date: new Date().toISOString().split('T')[0]
+      });
+      
+      const ticket = maintenance.find(m => m.id === activeTicketId);
+      const asset = assets.find(a => a.id === ticket?.asset_id);
+      
+      addNotification(
+        '🎉 Maintenance Resolved', 
+        `Repair for "${asset ? asset.name : 'Asset'}" is resolved and asset status updated back to Available.`, 
+        'success'
+      );
+      setResolveDialogOpen(false);
+      loadData();
+    } catch (err: any) {
+      addNotification('❌ Resolution Failed', err.message || 'Error occurred.', 'error');
     }
   };
 
@@ -211,17 +290,51 @@ export const Maintenance: React.FC = () => {
 
   const getTicketsForDate = (day: number) => {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    // Show only Approved active schedules in the calendar
-    return maintenance.filter(m => m.scheduled_date === dateStr && m.approval_status === 'Approved');
+    return maintenance.filter(m => m.scheduled_date === dateStr && m.approval_status === 'Approved' && m.status !== 'Completed');
+  };
+
+  // Get Priority Color
+  const getPriorityColor = (p: string) => {
+    switch (p) {
+      case 'Critical': return '#991b1b';
+      case 'High': return '#ea580c';
+      case 'Medium': return '#eab308';
+      case 'Low': return '#2563eb';
+      default: return '#71717a';
+    }
+  };
+
+  // Workflow states: Pending Approval, Approved, Technician Assigned, In Progress, Completed (Resolved)
+  const getWorkflowChipColor = (m: any) => {
+    if (m.approval_status === 'Pending Approval' || m.status === 'Pending') return 'warning';
+    if (m.status === 'Approved') return 'primary';
+    if (m.status === 'Technician Assigned') return 'secondary';
+    if (m.status === 'In Progress') return 'info';
+    if (m.status === 'Completed' || m.status === 'Resolved') return 'success';
+    if (m.status === 'Cancelled' || m.approval_status === 'Rejected') return 'error';
+    return 'default';
+  };
+
+  const getWorkflowLabel = (m: any) => {
+    if (m.approval_status === 'Pending Approval' || m.status === 'Pending') return 'Pending Approval';
+    if (m.status === 'Approved') return 'Approved (Needs Tech)';
+    if (m.status === 'Completed') return 'Resolved';
+    return m.status;
   };
 
   // Group tickets
-  const pendingRequests = maintenance.filter(m => m.approval_status === 'Pending Approval');
-  const activeSchedules = maintenance.filter(m => m.approval_status === 'Approved');
+  const pendingRequests = maintenance.filter(m => m.status === 'Pending' || m.approval_status === 'Pending Approval');
+  const activeSchedules = maintenance.filter(m => m.status !== 'Pending' && m.approval_status !== 'Pending Approval');
 
   const getRequesterName = (id: string) => {
     const found = users.find(u => u.id === id);
-    return found ? `${found.first_name} ${found.last_name}` : 'Unknown';
+    return found ? `${found.first_name} ${found.last_name}` : 'Employee';
+  };
+
+  const getHistoryLogsForAsset = () => {
+    return maintenance
+      .filter(m => m.asset_id === historyAssetId)
+      .sort((a, b) => new Date(b.created_at || b.scheduled_date).getTime() - new Date(a.created_at || a.scheduled_date).getTime());
   };
 
   return (
@@ -229,11 +342,11 @@ export const Maintenance: React.FC = () => {
       {/* Page Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 'bold', mb: 0.5 }}>
-            Maintenance & Telemetry Controls
+          <Typography variant="h5" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+            Maintenance & Telemetry Control Deck
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Request repairs, route approvals, simulate telemetry anomaly risks, and schedule work orders
+            Submit repair tickets, route supervisor approvals, assign technicians, and track maintenance lifecycles
           </Typography>
         </Box>
       </Box>
@@ -243,13 +356,13 @@ export const Maintenance: React.FC = () => {
         
         {/* Telemetry Simulator & Predictive maintenance */}
         <Grid item xs={12} md={5}>
-          <Card sx={{ height: '100%' }}>
-            <CardContent>
-              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <WarningIcon color="warning" /> Predictive AI Anomaly Simulator
+          <Card sx={{ height: '100%', borderRadius: 3, border: '1px solid', borderColor: 'divider', boxShadow: 'none' }}>
+            <CardContent sx={{ p: 3 }}>
+              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <WarningIcon color="warning" /> Telemetry Anomaly Simulator
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Select an asset and drag sliders to alter operating environments. The AI algorithms dynamically project system breakdown risks in real-time.
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 3 }}>
+                Calibrate mechanical operating environments to project machine breakdowns in real-time.
               </Typography>
 
               {/* Asset Select */}
@@ -268,7 +381,7 @@ export const Maintenance: React.FC = () => {
 
               {activeAsset && (
                 <Box>
-                  <Box sx={{ mb: 3.5 }}>
+                  <Box sx={{ mb: 3 }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                       <Typography variant="body2" sx={{ fontWeight: 'bold' }}>Temperature Gauge</Typography>
                       <Typography variant="body2" color="error.main" sx={{ fontWeight: 'bold' }}>{temp}°C</Typography>
@@ -284,7 +397,7 @@ export const Maintenance: React.FC = () => {
                     />
                   </Box>
 
-                  <Box sx={{ mb: 3.5 }}>
+                  <Box sx={{ mb: 3 }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                       <Typography variant="body2" sx={{ fontWeight: 'bold' }}>Vibration Index (G-Force)</Typography>
                       <Typography variant="body2" color="warning.main" sx={{ fontWeight: 'bold' }}>{vibration} mm/s</Typography>
@@ -300,7 +413,7 @@ export const Maintenance: React.FC = () => {
                     />
                   </Box>
 
-                  <Box sx={{ mb: 4 }}>
+                  <Box sx={{ mb: 3.5 }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                       <Typography variant="body2" sx={{ fontWeight: 'bold' }}>Operating Hours</Typography>
                       <Typography variant="body2" sx={{ fontWeight: 'bold' }}>{hours} hrs</Typography>
@@ -318,13 +431,18 @@ export const Maintenance: React.FC = () => {
                   <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 2, mb: 3, border: '1px dashed', borderColor: 'divider' }}>
                     <Grid container alignItems="center">
                       <Grid item xs={7}>
-                        <Typography variant="body2" sx={{ fontWeight: 'medium' }}>Calculated Failure Likelihood:</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 'medium' }}>Likelihood of Mechanical Failure:</Typography>
                       </Grid>
                       <Grid item xs={5} sx={{ textAlign: 'right' }}>
                         <Chip 
                           label={`${calculatePredictedRisk(temp, vibration, hours)}%`}
-                          color={calculatePredictedRisk(temp, vibration, hours) > 75 ? 'error' : calculatePredictedRisk(temp, vibration, hours) > 40 ? 'warning' : 'success'}
-                          sx={{ fontWeight: 'bold', fontSize: '1rem', px: 1 }}
+                          sx={{ 
+                            fontWeight: 'bold', 
+                            fontSize: '0.9rem', 
+                            px: 0.5,
+                            bgcolor: calculatePredictedRisk(temp, vibration, hours) > 75 ? 'error.main' : calculatePredictedRisk(temp, vibration, hours) > 40 ? 'warning.main' : 'success.main',
+                            color: '#fff'
+                          }}
                         />
                       </Grid>
                     </Grid>
@@ -335,6 +453,7 @@ export const Maintenance: React.FC = () => {
                     variant="contained" 
                     color="primary"
                     onClick={handleTelemetryUpdate}
+                    sx={{ textTransform: 'none', borderRadius: 2 }}
                   >
                     Commit Telemetry Updates
                   </Button>
@@ -346,11 +465,11 @@ export const Maintenance: React.FC = () => {
 
         {/* Schedule Calendar */}
         <Grid item xs={12} md={7}>
-          <Card>
-            <CardContent>
+          <Card sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', boxShadow: 'none' }}>
+            <CardContent sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Typography variant="h6" sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <CalendarIcon color="primary" /> Approved Work Order Calendar
+                  <CalendarIcon color="primary" /> Maintenance Work Calendar
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
                   <IconButton onClick={handlePrevMonth} size="small"><PrevIcon /></IconButton>
@@ -410,7 +529,7 @@ export const Maintenance: React.FC = () => {
                             <Box 
                               key={index} 
                               sx={{ 
-                                bgcolor: t.status === 'Completed' ? 'success.main' : t.status === 'In Progress' ? 'warning.main' : 'primary.main',
+                                bgcolor: t.status === 'Completed' ? 'success.main' : t.status === 'In Progress' ? 'info.main' : 'warning.main',
                                 height: 5,
                                 borderRadius: 1
                               }} 
@@ -435,27 +554,29 @@ export const Maintenance: React.FC = () => {
 
       {/* Approvals Queue (Only seen by Admins, Asset Managers, and Department Heads) */}
       {role !== 'Employee' && (
-        <Card sx={{ border: '1px solid', borderColor: 'primary.main', mb: 4 }}>
-          <CardContent>
-            <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'primary.main' }}>
-              🔧 Pending Maintenance Approvals Queue ({pendingRequests.length})
+        <Card sx={{ borderRadius: 3, border: '2px solid', borderColor: 'warning.light', mb: 4, boxShadow: 'none' }}>
+          <CardContent sx={{ p: 2.5 }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: 'warning.dark', display: 'flex', alignItems: 'center', gap: 1 }}>
+              ⏳ Pending Maintenance Approvals Queue ({pendingRequests.length})
             </Typography>
             <TableContainer>
               <Table size="small">
                 <TableHead sx={{ bgcolor: 'action.hover' }}>
                   <TableRow>
-                    <TableCell sx={{ fontWeight: 'bold' }}>Asset</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Asset Tag</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Priority</TableCell>
                     <TableCell sx={{ fontWeight: 'bold' }}>Requested By</TableCell>
                     <TableCell sx={{ fontWeight: 'bold' }}>Description</TableCell>
                     <TableCell sx={{ fontWeight: 'bold' }}>Est. Cost</TableCell>
                     <TableCell sx={{ fontWeight: 'bold' }}>Scheduled Date</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Workflow Action</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Photo</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pendingRequests.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 2, color: 'text.secondary' }}>
+                      <TableCell colSpan={8} align="center" sx={{ py: 2, color: 'text.secondary' }}>
                         No pending maintenance approvals. All tickets routed.
                       </TableCell>
                     </TableRow>
@@ -464,11 +585,38 @@ export const Maintenance: React.FC = () => {
                       const asset = assets.find(a => a.id === req.asset_id);
                       return (
                         <TableRow key={req.id}>
-                          <TableCell><strong>{asset ? asset.name : 'Unknown Asset'}</strong></TableCell>
+                          <TableCell>
+                            <strong>{asset ? asset.name : 'Unknown Asset'}</strong>
+                            <Typography variant="caption" sx={{ display: 'block' }}>{asset?.asset_tag}</Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip 
+                              label={
+                                <Stack direction="row" spacing={0.8} alignItems="center">
+                                  {req.priority === 'Critical' && <span className="pulse-red" />}
+                                  <span>{req.priority || 'Medium'}</span>
+                                </Stack>
+                              } 
+                              size="small" 
+                              sx={{ 
+                                bgcolor: `${getPriorityColor(req.priority || 'Medium')}15`, 
+                                color: getPriorityColor(req.priority || 'Medium'),
+                                fontWeight: 'bold',
+                                fontSize: '0.72rem'
+                              }} 
+                            />
+                          </TableCell>
                           <TableCell>{getRequesterName(req.requested_by)}</TableCell>
                           <TableCell>{req.description}</TableCell>
                           <TableCell>${Number(req.cost).toFixed(2)}</TableCell>
                           <TableCell>{req.scheduled_date}</TableCell>
+                          <TableCell>
+                            {req.photo_url ? (
+                              <Avatar variant="rounded" src={req.photo_url} sx={{ width: 34, height: 34, cursor: 'pointer' }} onClick={() => window.open(req.photo_url, '_blank')} />
+                            ) : (
+                              <ImageIcon color="action" />
+                            )}
+                          </TableCell>
                           <TableCell align="right">
                             <Stack direction="row" spacing={1} justifyContent="flex-end">
                               <Button 
@@ -504,65 +652,110 @@ export const Maintenance: React.FC = () => {
         </Card>
       )}
 
-      {/* Maintenance Logs List */}
-      <Card sx={{ border: '1px solid', borderColor: 'divider' }}>
-        <CardContent>
-          <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2.5 }}>Active Service Log Tickets</Typography>
+      {/* Active Workorders & Live Logs */}
+      <Card sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', boxShadow: 'none', mb: 4 }}>
+        <CardContent sx={{ p: 0 }}>
+          <Box sx={{ p: 2.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>Active Work Orders & Lifecycle Management</Typography>
+          </Box>
           <TableContainer>
-            <Table size="small">
+            <Table>
               <TableHead sx={{ bgcolor: 'action.hover' }}>
                 <TableRow>
                   <TableCell sx={{ fontWeight: 'bold' }}>Asset Description</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Problem Description</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Priority</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Issue Details</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Technician / Vendor</TableCell>
                   <TableCell sx={{ fontWeight: 'bold' }}>Cost</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Assigned Vendor</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Scheduled Date</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Approval</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Status</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Controls</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Target Date</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Workflow Status</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Control Handles</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {loading ? (
                   <TableRow><TableCell colSpan={8} align="center" sx={{ py: 3 }}>Loading...</TableCell></TableRow>
                 ) : activeSchedules.length === 0 ? (
-                  <TableRow><TableCell colSpan={8} align="center" sx={{ py: 3 }}>No logs recorded.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} align="center" sx={{ py: 3 }}>No active maintenance workorders.</TableCell></TableRow>
                 ) : (
-                  activeSchedules.map((m) => {
+                  [...activeSchedules].sort((a,b) => new Date(b.scheduled_date).getTime() - new Date(a.scheduled_date).getTime()).map((m) => {
                     const asset = assets.find(a => a.id === m.asset_id);
                     return (
-                      <TableRow key={m.id}>
-                        <TableCell><strong>{asset ? asset.name : 'Unknown Asset'}</strong></TableCell>
+                      <TableRow key={m.id} hover>
+                        <TableCell>
+                          <strong>{asset ? asset.name : 'Unknown Asset'}</strong>
+                          <Typography variant="caption" sx={{ display: 'block' }}>Tag: {asset?.asset_tag} | Loc: {asset?.location}</Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Chip 
+                            label={
+                              <Stack direction="row" spacing={0.8} alignItems="center">
+                                {m.priority === 'Critical' && <span className="pulse-red" />}
+                                <span>{m.priority || 'Medium'}</span>
+                              </Stack>
+                            } 
+                            size="small" 
+                            sx={{ 
+                              bgcolor: `${getPriorityColor(m.priority || 'Medium')}15`, 
+                              color: getPriorityColor(m.priority || 'Medium'),
+                              fontWeight: 'bold',
+                              fontSize: '0.72rem'
+                            }} 
+                          />
+                        </TableCell>
                         <TableCell>{m.description}</TableCell>
-                        <TableCell>${Number(m.cost).toFixed(2)}</TableCell>
                         <TableCell>{m.performed_by || 'Unassigned'}</TableCell>
+                        <TableCell>${Number(m.cost).toFixed(2)}</TableCell>
                         <TableCell>{m.scheduled_date}</TableCell>
                         <TableCell>
                           <Chip 
-                            label={m.approval_status} 
-                            color={m.approval_status === 'Approved' ? 'success' : m.approval_status === 'Rejected' ? 'error' : 'warning'}
+                            label={
+                              <Stack direction="row" spacing={0.8} alignItems="center">
+                                {m.status === 'In Progress' && <span className="pulse-green" />}
+                                {(m.status === 'Technician Assigned' || m.status === 'Approved') && <span className="pulse-amber" />}
+                                <span>{getWorkflowLabel(m)}</span>
+                              </Stack>
+                            } 
+                            color={getWorkflowChipColor(m) as any}
                             size="small"
                             sx={{ fontWeight: 'bold' }}
                           />
                         </TableCell>
-                        <TableCell>
-                          <Chip 
-                            label={m.status} 
-                            color={m.status === 'Completed' ? 'success' : m.status === 'In Progress' ? 'warning' : 'info'}
-                            size="small"
-                          />
-                        </TableCell>
                         <TableCell align="right">
-                          {m.status !== 'Completed' && role !== 'Employee' && (
-                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                              {m.status === 'Scheduled' && (
-                                <Button size="small" variant="outlined" onClick={() => handleUpdateStatus(m.id, 'In Progress')}>
-                                  Start
+                          {m.status !== 'Completed' && m.status !== 'Cancelled' && role !== 'Employee' && (
+                            <Stack direction="row" spacing={1} justifyContent="flex-end">
+                              {/* Workflow State transitions */}
+                              {m.status === 'Approved' && (
+                                <Button 
+                                  size="small" 
+                                  variant="outlined" 
+                                  color="secondary"
+                                  startIcon={<TechIcon />}
+                                  onClick={() => handleAssignTechnicianClick(m.id)}
+                                >
+                                  Assign Tech
+                                </Button>
+                              )}
+                              {m.status === 'Technician Assigned' && (
+                                <Button 
+                                  size="small" 
+                                  variant="outlined" 
+                                  color="info"
+                                  startIcon={<StartIcon />}
+                                  onClick={() => handleStartWork(m.id)}
+                                >
+                                  Start Work
                                 </Button>
                               )}
                               {m.status === 'In Progress' && (
-                                <Button size="small" variant="contained" color="success" onClick={() => handleUpdateStatus(m.id, 'Completed')}>
-                                  Close Ticket
+                                <Button 
+                                  size="small" 
+                                  variant="contained" 
+                                  color="success"
+                                  startIcon={<ResolveIcon />}
+                                  onClick={() => handleResolveClick(m.id)}
+                                >
+                                  Resolve
                                 </Button>
                               )}
                             </Stack>
@@ -578,7 +771,83 @@ export const Maintenance: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Schedule from Calendar Click Dialog */}
+      {/* Asset Maintenance History Panel */}
+      <Card sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', boxShadow: 'none' }}>
+        <CardContent sx={{ p: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+            <HistoryIcon color="action" /> Comprehensive Asset Maintenance History
+          </Typography>
+          
+          <FormControl size="small" sx={{ minWidth: 260, mb: 3 }}>
+            <InputLabel>Select Asset to View History</InputLabel>
+            <Select
+              value={historyAssetId}
+              label="Select Asset to View History"
+              onChange={(e) => setHistoryAssetId(e.target.value)}
+            >
+              {assets.map(a => (
+                <MenuItem key={a.id} value={a.id}>{a.name} ({a.asset_tag})</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+            <Table size="small">
+              <TableHead sx={{ bgcolor: 'action.hover' }}>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Service Date</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Description</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Priority</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Vendor / Technician</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Cost</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Status</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Resolved Date</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {getHistoryLogsForAsset().length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} align="center" sx={{ py: 2, color: 'text.secondary' }}>
+                      No maintenance records listed for this asset.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  getHistoryLogsForAsset().map((h) => (
+                    <TableRow key={h.id}>
+                      <TableCell>{h.scheduled_date}</TableCell>
+                      <TableCell>{h.description}</TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={h.priority || 'Medium'} 
+                          size="small" 
+                          sx={{ 
+                            bgcolor: `${getPriorityColor(h.priority || 'Medium')}15`, 
+                            color: getPriorityColor(h.priority || 'Medium'),
+                            fontWeight: 'bold',
+                            fontSize: '0.7rem'
+                          }} 
+                        />
+                      </TableCell>
+                      <TableCell>{h.performed_by || 'N/A'}</TableCell>
+                      <TableCell>${Number(h.cost).toFixed(2)}</TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={getWorkflowLabel(h)} 
+                          color={getWorkflowChipColor(h) as any}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>{h.completion_date || 'Ongoing'}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </CardContent>
+      </Card>
+
+      {/* Schedule Maintenance Dialog (Called from calendar cell click) */}
       <Dialog open={scheduleDialogOpen} onClose={() => setScheduleDialogOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 'bold' }}>
           {role === 'Admin' || role === 'Asset Manager' ? 'Schedule Maintenance' : 'Request Maintenance'} ({selectedDateCell})
@@ -589,8 +858,18 @@ export const Maintenance: React.FC = () => {
               <InputLabel>Asset *</InputLabel>
               <Select value={formAsset} onChange={(e) => setFormAsset(e.target.value)} label="Asset *">
                 {assets.map(a => (
-                  <MenuItem key={a.id} value={a.id}>{a.name}</MenuItem>
+                  <MenuItem key={a.id} value={a.id}>{a.name} ({a.asset_tag})</MenuItem>
                 ))}
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth size="small">
+              <InputLabel>Priority *</InputLabel>
+              <Select value={formPriority} onChange={(e) => setFormPriority(e.target.value)} label="Priority *">
+                <MenuItem value="Low">🟢 Low</MenuItem>
+                <MenuItem value="Medium">🟡 Medium</MenuItem>
+                <MenuItem value="High">🟠 High</MenuItem>
+                <MenuItem value="Critical">🔴 Critical</MenuItem>
               </Select>
             </FormControl>
 
@@ -611,22 +890,75 @@ export const Maintenance: React.FC = () => {
               onChange={(e) => setFormCost(e.target.value)}
             />
 
+            <TextField 
+              label="Photo URL (Attachment)" 
+              placeholder="Paste photo link or leave blank"
+              fullWidth 
+              size="small"
+              value={formPhotoUrl}
+              onChange={(e) => setFormPhotoUrl(e.target.value)}
+            />
+
+            {(role === 'Admin' || role === 'Asset Manager') && (
+              <FormControl fullWidth size="small">
+                <InputLabel>Vendor Partner</InputLabel>
+                <Select value={formVendor} onChange={(e) => setFormVendor(e.target.value)} label="Vendor Partner">
+                  {vendors.map(v => (
+                    <MenuItem key={v.id} value={v.name}>{v.name}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setScheduleDialogOpen(false)} color="inherit">Cancel</Button>
+          <Button onClick={handleCreateMaintenance} variant="contained" color="primary" sx={{ borderRadius: 1.5 }}>
+            {role === 'Admin' || role === 'Asset Manager' ? 'Create Workorder' : 'Submit Request'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Assign Technician Dialog */}
+      <Dialog open={assignDialogOpen} onClose={() => setAssignDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 'bold' }}>Assign Technician / Partner</DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ pt: 1 }}>
             <FormControl fullWidth size="small">
-              <InputLabel>Vendor Partner</InputLabel>
-              <Select value={formVendor} onChange={(e) => setFormVendor(e.target.value)} label="Vendor Partner">
-                <MenuItem value="TechCorp Solutions">TechCorp Solutions</MenuItem>
-                <MenuItem value="OfficeDepot Ltd">OfficeDepot Ltd</MenuItem>
-                <MenuItem value="HeavyMachinery Inc">HeavyMachinery Inc</MenuItem>
-                <MenuItem value="Global Logistics">Global Logistics</MenuItem>
+              <InputLabel>Technician / Partner *</InputLabel>
+              <Select value={assignedTech} onChange={(e) => setAssignedTech(e.target.value)} label="Technician / Partner *">
+                {vendors.map(v => (
+                  <MenuItem key={v.id} value={v.name}>{v.name} (⭐ {v.rating})</MenuItem>
+                ))}
+                <MenuItem value="Internal Facilities Team">Internal Facilities Team</MenuItem>
               </Select>
             </FormControl>
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setScheduleDialogOpen(false)} color="inherit">Cancel</Button>
-          <Button onClick={handleCreateMaintenance} variant="contained" color="primary">
-            {role === 'Admin' || role === 'Asset Manager' ? 'Create Schedule' : 'Submit Request'}
-          </Button>
+          <Button onClick={() => setAssignDialogOpen(false)} color="inherit">Cancel</Button>
+          <Button onClick={handleAssignTechSubmit} variant="contained" color="primary">Assign Tech</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Resolve Dialog */}
+      <Dialog open={resolveDialogOpen} onClose={() => setResolveDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 'bold' }}>Resolve Maintenance Ticket</DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ pt: 1 }}>
+            <TextField 
+              label="Actual Final Cost ($) *" 
+              type="number"
+              fullWidth 
+              size="small"
+              value={resolvedCost}
+              onChange={(e) => setResolvedCost(e.target.value)}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResolveDialogOpen(false)} color="inherit">Cancel</Button>
+          <Button onClick={handleResolveSubmit} variant="contained" color="success">Resolve Ticket</Button>
         </DialogActions>
       </Dialog>
     </Box>
